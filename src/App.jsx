@@ -1,5 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { HeartPulse, Volume2, Sparkles, Monitor, Phone, Shield, Database, Wifi, WifiOff, Search } from 'lucide-react';
+import {
+  HeartPulse,
+  Volume2,
+  Sparkles,
+  Monitor,
+  Phone,
+  Shield,
+  Database,
+  Wifi,
+  WifiOff,
+  Search,
+  Stethoscope
+} from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReceptionistConsole from './components/ReceptionistConsole';
 import LobbyTV from './components/LobbyTV';
@@ -7,6 +19,10 @@ import PatientMobile from './components/PatientMobile';
 import ArchitectureSheet from './components/ArchitectureSheet';
 import { playChime, announcePatientCall } from './utils/audio';
 import SmartSearch from './components/SmartSearch';
+import socket from "./socket";
+import DoctorChamber from './components/DoctorChamber';
+
+
 
 export default function App() {
   // 💾 local Storage Initial Fallback Data
@@ -79,6 +95,48 @@ export default function App() {
   }, [backendURL]);
 
   useEffect(() => {
+  socket.on("queueUpdated", (updatedQueue) => {
+    setQueue(updatedQueue);
+  });
+
+  socket.on("avgTimeUpdated", (avgTime) => {
+    setAvgConfigTime(avgTime);
+  });
+
+  socket.on("patientCalled", (patient) => {
+    triggerToast(
+      `Token #${patient.token} called to Chamber!`
+    );
+
+    playChime(soundEnabled);
+
+    setTimeout(() => {
+      announcePatientCall(
+        soundEnabled,
+        patient.token,
+        patient.name
+      );
+    }, 800);
+  });
+
+  socket.on("connect", () => {
+    console.log("✅ Socket Connected:", socket.id);
+  });
+
+  socket.on("disconnect", () => {
+    console.log("❌ Socket Disconnected");
+  });
+
+  return () => {
+    socket.off("queueUpdated");
+    socket.off("avgTimeUpdated");
+    socket.off("patientCalled");
+    socket.off("connect");
+    socket.off("disconnect");
+  };
+}, [soundEnabled]);
+
+  useEffect(() => {
     if (dbMode === 'LOCAL_CACHE') {
       localStorage.setItem('qc_enterprise_queue', JSON.stringify(queue));
     }
@@ -117,14 +175,39 @@ export default function App() {
   const totalWaitingCount = queue.filter(p => p.status === 'Waiting').length;
 
   const getQueueMetrics = (patientId) => {
-    const waitingList = queue.filter(p => p.status === 'Waiting');
-    const index = waitingList.findIndex(p => p.id === patientId);
-    if (index === -1) {
-      const isServing = queue.find(p => p.id === patientId && p.status === 'Serving');
-      return isServing ? { position: 0, waitTime: 0 } : { position: -1, waitTime: -1 };
-    }
-    return { position: index + 1, waitTime: Math.max(0, index * actualAvgTime) };
+  const waitingList = queue.filter(
+    p => p.status === 'Waiting'
+  );
+
+  const index = waitingList.findIndex(
+    p => p.id === patientId
+  );
+
+  if (index === -1) {
+    const isServing = queue.find(
+      p => p.id === patientId && p.status === 'Serving'
+    );
+
+    return isServing
+      ? { position: 0, waitTime: 0 }
+      : { position: -1, waitTime: -1 };
+  }
+
+  let estimated = 0;
+
+  for (let i = 0; i < index; i++) {
+    const sev = waitingList[i].severity;
+
+    if (sev === 'Emergency') estimated += actualAvgTime * 1.5;
+    else if (sev === 'Urgent') estimated += actualAvgTime * 1.2;
+    else estimated += actualAvgTime;
+  }
+
+  return {
+    position: index + 1,
+    waitTime: Math.round(estimated)
   };
+};
 
   const handleAddPatient = async (e) => {
     e.preventDefault();
@@ -143,9 +226,6 @@ export default function App() {
         });
         if (response.ok) {
           const registeredPatient = await response.json();
-          const queueRes = await fetch(`${backendURL}/api/queue`);
-          const freshQueue = await queueRes.json();
-          setQueue(freshQueue);
           setNextTokenSeed(registeredPatient.token + 1);
           triggerToast(`Database Token #${registeredPatient.token} issued successfully!`);
         }
@@ -184,9 +264,6 @@ export default function App() {
         });
         if (response.ok) {
           const registered = await response.json();
-          const queueRes = await fetch(`${backendURL}/api/queue`);
-          const freshQueue = await queueRes.json();
-          setQueue(freshQueue);
           setNextTokenSeed(registered.token + 1);
           triggerToast(`Database Token #${registered.token} issued for ${premadeName}`);
         }
@@ -213,19 +290,11 @@ export default function App() {
         const response = await fetch(`${backendURL}/api/queue/call-next`, { method: 'PATCH' });
         if (response.ok) {
           const resData = await response.json();
-          const queueRes = await fetch(`${backendURL}/api/queue`);
-          const freshQueue = await queueRes.json();
-          setQueue(freshQueue);
           if (resData.currentlyServing) {
             triggerToast(`Token #${resData.currentlyServing.token} called to Chamber!`);
             playChime(soundEnabled);
             setTimeout(() => { announcePatientCall(soundEnabled, resData.currentlyServing.token, resData.currentlyServing.name); }, 800);
           } else { triggerToast("Operational queue cleared."); }
-          const analyticsResponse = await fetch(`${backendURL}/api/queue/analytics`);
-          if (analyticsResponse.ok) {
-            const analytics = await analyticsResponse.json();
-            if (analytics.avgDuration) setAvgConfigTime(analytics.avgDuration);
-          }
         }
       } catch (err) { console.error(err); }
     } else {
@@ -237,7 +306,23 @@ export default function App() {
           const servingPatient = updatedQueue[currentServingIdx];
           completedItem = { id: servingPatient.id, token: servingPatient.token, name: servingPatient.name, duration: Math.floor(Math.random() * 8) + 6, completedAt: new Date().toISOString() };
           // ADD TO HISTORY
-          setVisitHistory(prev => [...prev, { ...servingPatient, visitedAt: new Date().toISOString() }]);
+          setVisitHistory(prev => {
+  const alreadyExists = prev.some(
+    p =>
+      p.id === servingPatient.id ||
+      p.token === servingPatient.token
+  );
+
+  if (alreadyExists) return prev;
+
+  return [
+    ...prev,
+    {
+      ...servingPatient,
+      visitedAt: new Date().toISOString()
+    }
+  ];
+});
           updatedQueue.splice(currentServingIdx, 1);
         }
         const nextWaitingIdx = updatedQueue.findIndex(p => p.status === 'Waiting');
@@ -295,7 +380,12 @@ export default function App() {
               { id: 'reception', icon: Monitor, label: 'Receptionist Desk' },
               { id: 'patient', icon: Phone, label: 'Lobby & Mobile' },
               { id: 'architecture', icon: Shield, label: 'Blueprint Sheet' },
-              { id: 'search', icon: Search, label: 'Smart Search' }
+              { id: 'search', icon: Search, label: 'Smart Search' },
+              {
+  id: 'doctor',
+  icon: Stethoscope,
+  label: 'Doctor Chamber'
+}
             ].map((item) => (
               <motion.button 
                 key={item.id}
@@ -355,6 +445,11 @@ export default function App() {
               </div>
             )}
             {activeTab === 'architecture' && <ArchitectureSheet />}
+            {activeTab === 'doctor' && (
+  <DoctorChamber
+    currentlyServing={currentlyServing}
+  />
+)}
           </motion.div>
         </AnimatePresence>
       </main>
