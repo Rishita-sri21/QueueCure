@@ -56,7 +56,7 @@ export default function App() {
   });
 
   const [dbMode, setDbMode] = useState('LOCAL_CACHE'); 
-  const [backendURL] = useState('http://localhost:5000'); 
+  const [backendURL] = useState('https://queuecure-1.onrender.com'); 
 
   const [patientName, setPatientName] = useState('');
   const [patientPhone, setPatientPhone] = useState('');
