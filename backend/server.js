@@ -164,6 +164,8 @@ app.patch('/api/queue/call-next', async (req, res) => {
         status: 'Serving'
       });
 
+      let completedPatient = null;
+
     if (currentServing) {
       currentServing.status = 'Completed';
       currentServing.duration =
@@ -171,6 +173,7 @@ app.patch('/api/queue/call-next', async (req, res) => {
       currentServing.completedAt = new Date();
 
       await currentServing.save();
+      completedPatient = currentServing;
     }
 
     const waitingList = await Patient.find({
@@ -182,7 +185,8 @@ app.patch('/api/queue/call-next', async (req, res) => {
 
       return res.status(200).json({
         message: 'No patients in waiting queue.',
-        currentlyServing: null
+        currentlyServing: null,
+        completedPatient
       });
     }
 
@@ -227,7 +231,8 @@ app.patch('/api/queue/call-next', async (req, res) => {
 
     res.status(200).json({
       message: `Token #${nextPatient.token} summoned successfully`,
-      currentlyServing: nextPatient
+      currentlyServing: nextPatient,
+      completedPatient
     });
   } catch (err) {
     res.status(500).json({
