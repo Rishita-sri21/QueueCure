@@ -70,15 +70,16 @@ async function broadcastQueueUpdate() {
   } catch (err) {
     console.error(err);
   }
-}
-
-const history = await Patient.find({
+  const history = await Patient.find({
   status: 'Completed'
 })
 .sort({ completedAt: -1 })
 .limit(50);
 
 io.emit('historyUpdated', history);
+}
+
+
 
 io.on('connection', async socket => {
   console.log(`⚡ Client Connected: ${socket.id}`);
