@@ -72,6 +72,14 @@ async function broadcastQueueUpdate() {
   }
 }
 
+const history = await Patient.find({
+  status: 'Completed'
+})
+.sort({ completedAt: -1 })
+.limit(50);
+
+io.emit('historyUpdated', history);
+
 io.on('connection', async socket => {
   console.log(`⚡ Client Connected: ${socket.id}`);
 
@@ -173,6 +181,7 @@ app.patch('/api/queue/call-next', async (req, res) => {
       currentServing.completedAt = new Date();
 
       await currentServing.save();
+      console.log("COMPLETED:", currentServing.name);
       completedPatient = currentServing;
     }
 
@@ -275,6 +284,22 @@ app.get('/api/queue/analytics', async (req, res) => {
     res.status(500).json({
       error:
         'Failed to compile database metrics'
+    });
+  }
+});
+
+app.get('/api/queue/history', async (req, res) => {
+  try {
+    const history = await Patient.find({
+      status: 'Completed'
+    })
+      .sort({ completedAt: -1 })
+      .limit(50);
+
+    res.json(history);
+  } catch (err) {
+    res.status(500).json({
+      error: 'Failed to fetch history'
     });
   }
 });

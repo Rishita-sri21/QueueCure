@@ -79,6 +79,15 @@ export default function App() {
           const data = await response.json();
           setQueue(data);
           setDbMode('MONGO_LIVE');
+          const historyResponse =
+  await fetch(`${backendURL}/api/queue/history`);
+
+if (historyResponse.ok) {
+  const historyData =
+    await historyResponse.json();
+
+  setVisitHistory(historyData);
+}
           triggerToast("Connected to live MongoDB Cluster!");
           const analyticsResponse = await fetch(`${backendURL}/api/queue/analytics`);
           if (analyticsResponse.ok) {
@@ -102,6 +111,10 @@ export default function App() {
   socket.on("avgTimeUpdated", (avgTime) => {
     setAvgConfigTime(avgTime);
   });
+
+  socket.on("historyUpdated", (history) => {
+  setVisitHistory(history);
+});
 
   socket.on("patientCalled", (patient) => {
     triggerToast(
@@ -130,6 +143,7 @@ export default function App() {
   return () => {
     socket.off("queueUpdated");
     socket.off("avgTimeUpdated");
+    socket.off("historyUpdated");
     socket.off("patientCalled");
     socket.off("connect");
     socket.off("disconnect");
@@ -290,6 +304,16 @@ export default function App() {
         const response = await fetch(`${backendURL}/api/queue/call-next`, { method: 'PATCH' });
         if (response.ok) {
           const resData = await response.json();
+          if (resData.completedPatient) {
+  setVisitHistory(prev => [
+    {
+      ...resData.completedPatient,
+      visitedAt: new Date().toISOString()
+    },
+    ...prev
+  ]);
+}
+
           if (resData.currentlyServing) {
             triggerToast(`Token #${resData.currentlyServing.token} called to Chamber!`);
             playChime(soundEnabled);
